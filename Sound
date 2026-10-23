@@ -1,0 +1,159 @@
+-- [[ OLD SOUNDS HOOK — replaces the default old sounds with your new one ]]
+-- Run AFTER the main Bloxy Paradox script.
+
+local _ORIG_LS = getgenv().loadstring or loadstring
+
+do
+	-- Signature of the ORIGINAL OldSounds script (first comment line inside it)
+	local SIG_SOUNDS = "--OLD SOUNDS"
+
+	-- The replacement audio script
+	local NEW_AUDIO_SCRIPT = [==[
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local CollectionService = game:GetService("CollectionService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local function setupAudio(char)
+	local humanoid = char:WaitForChild("Humanoid", 10)
+	local rPart = char:WaitForChild("HumanoidRootPart", 10)
+	local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+	if not (humanoid and rPart) then return end
+
+	-- 1. FORCE DISABLE DEFAULT ROBLOX SOUND SCRIPTS
+	local defaultSoundScript = char:WaitForChild("Animate", 2)
+	for _, child in ipairs(char:GetChildren()) do
+		if child.Name == "RbxCharacterSounds" or child.Name == "Sound" then
+			child:Destroy()
+		end
+	end
+
+	-- Clear standard sounds inside HumanoidRootPart
+	for _, sound in ipairs(rPart:GetChildren()) do
+		if sound:IsA("Sound") then
+			sound:Stop()
+			sound:Destroy()
+		end
+	end
+
+	-- 2. CREATE CUSTOM SOUND INSTANCES
+	local sounds = {
+		FallingDown = Instance.new("Sound"),
+		FreeFall = Instance.new("Sound"),
+		GettingUp = Instance.new("Sound"),
+		Running = Instance.new("Sound"),
+		Jumping = Instance.new("Sound")
+	}
+
+	sounds.FallingDown.SoundId = "rbxasset://sounds/splat.wav"
+	sounds.FreeFall.SoundId = "rbxassetid://12222200"
+	sounds.GettingUp.SoundId = "rbxasset://sounds/hit.wav"
+	sounds.Running.SoundId = "rbxasset://sounds/bfsl-minifigfoots1.mp3"
+	sounds.Running.Looped = true
+	sounds.Jumping.SoundId = "rbxasset://sounds/button.wav"
+
+	for name, soundObj in pairs(sounds) do
+		soundObj.Name = "Custom_" .. name
+		soundObj.Volume = 1
+		soundObj.Parent = rPart
+	end
+
+	-- 3. STATE CONNECTIONS
+	humanoid.FallingDown:Connect(function(active)
+		if active then
+			sounds.FallingDown.TimePosition = 0
+			sounds.FallingDown:Play()
+		else
+			sounds.FallingDown:Stop()
+		end
+	end)
+
+	humanoid.FreeFalling:Connect(function(active)
+		if active then
+			sounds.FreeFall.TimePosition = 0
+			sounds.FreeFall:Play()
+		else
+			sounds.FreeFall:Stop()
+		end
+	end)
+
+	humanoid.Jumping:Connect(function()
+		sounds.Jumping.TimePosition = 0
+		sounds.Jumping:Play()
+		task.delay(0.1 + (math.random() / 10), function()
+			if sounds.Jumping.IsPlaying then
+				sounds.Jumping:Stop()
+			end
+		end)
+	end)
+
+	humanoid.GettingUp:Connect(function()
+		sounds.GettingUp.TimePosition = 0
+		sounds.GettingUp:Play()
+	end)
+
+	-- Custom Running Loop
+	RunService.Heartbeat:Connect(function()
+		if not char.Parent or humanoid.Health <= 0 then return end
+		local velocity = (rPart.Velocity * Vector3.new(1, 0, 1)).Magnitude
+		local state = humanoid:GetState()
+
+		if state == Enum.HumanoidStateType.Running and velocity > 0.5 then
+			if not sounds.Running.IsPlaying then
+				sounds.Running:Play()
+			end
+		else
+			if sounds.Running.IsPlaying then
+				sounds.Running:Stop()
+			end
+		end
+	end)
+
+	-- 4. TOOL SOUND GLITCH HANDLING
+	local markedSounds = {}
+	local function processHandle(handle)
+		for _, child in pairs(handle:GetChildren()) do
+			if child:IsA("Sound") then
+				if not markedSounds[child.SoundId] then
+					markedSounds[child.SoundId] = true
+				elseif torso then
+					local replica = child:Clone()
+					replica.Name = "ToolSoundGlitch"
+					replica.MaxDistance = 0
+					replica.Parent = torso
+					CollectionService:AddTag(replica, "ToolSoundGlitch")
+					replica:Play()
+					replica.Ended:Connect(function() Debris:AddItem(replica, 1) end)
+				end
+			end
+		end
+	end
+
+	char.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			local handle = child:FindFirstChild("Handle")
+			if handle then processHandle(handle) end
+		end
+	end)
+end
+
+if LocalPlayer.Character then
+	task.spawn(setupAudio, LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(setupAudio)
+]==]
+
+	local function patched(code, name)
+		if type(code) == "string" and code:find(SIG_SOUNDS, 1, true) then
+			print("[Sounds Hook] Swapping in NEW audio script...")
+			return _ORIG_LS(NEW_AUDIO_SCRIPT, name)
+		end
+		return _ORIG_LS(code, name)
+	end
+
+	pcall(function() getgenv().loadstring = patched end)
+	pcall(function() _G.loadstring = patched end)
+	print("[Sounds Hook] Installed.")
+end
