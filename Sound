@@ -17,7 +17,17 @@ local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
 
+-- Connections from the previous character, dropped on respawn
+local connections = {}
+local function cleanup()
+	for i, conn in ipairs(connections) do
+		conn:Disconnect()
+		connections[i] = nil
+	end
+end
+
 local function setupAudio(char)
+	cleanup()
 	local humanoid = char:WaitForChild("Humanoid", 10)
 	local rPart = char:WaitForChild("HumanoidRootPart", 10)
 	local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
@@ -62,9 +72,6 @@ local function setupAudio(char)
 	end
 
 	-- 3. STATE CONNECTIONS
-	-- Connections on services (not on the character) would outlive a respawn,
-	-- so keep them here and drop them when the character goes away.
-	local connections = {}
 	local function track(conn)
 		table.insert(connections, conn)
 		return conn
@@ -116,7 +123,7 @@ local function setupAudio(char)
 		end
 
 		if newState == Enum.HumanoidStateType.Jumping then
-			inRealJump = os.clock() - lastJumpRequest <= JUMP_REQUEST_WINDOW
+			inRealJump = humanoid.Jump or os.clock() - lastJumpRequest <= JUMP_REQUEST_WINDOW
 			if inRealJump then
 				playJumpSound()
 			end
@@ -141,7 +148,12 @@ local function setupAudio(char)
 		local reach = rPart.Size.Y / 2 + math.max(humanoid.HipHeight, 0) + 2.5
 		local result = workspace:Raycast(rPart.Position, Vector3.new(0, -reach, 0), floorParams)
 		if result and result.Instance then
-			return result.Instance:GetVelocityAtPosition(result.Position)
+			local ok, vel = pcall(function()
+				return result.Instance:GetVelocityAtPosition(result.Position)
+			end)
+			if ok and vel then
+				return vel
+			end
 		end
 		return Vector3.new(0, 0, 0)
 	end
@@ -166,13 +178,9 @@ local function setupAudio(char)
 		end
 	end))
 
-	track(char.AncestryChanged:Connect(function()
-		if char:IsDescendantOf(game) then return end
-		for i, conn in ipairs(connections) do
-			conn:Disconnect()
-			connections[i] = nil
-		end
-	end))
+	track(char.Destroying:Connect(cleanup))
+
+	print("[Old Sounds] Custom sounds active for " .. char.Name)
 
 	-- 4. TOOL SOUND GLITCH HANDLING
 	local markedSounds = {}
