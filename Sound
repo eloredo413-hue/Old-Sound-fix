@@ -11,6 +11,7 @@ do
 	local NEW_AUDIO_SCRIPT = [==[
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
 local CollectionService = game:GetService("CollectionService")
 
@@ -61,25 +62,15 @@ local function setupAudio(char)
 	end
 
 	-- 3. STATE CONNECTIONS
-	humanoid.FallingDown:Connect(function(active)
-		if active then
-			sounds.FallingDown.TimePosition = 0
-			sounds.FallingDown:Play()
-		else
-			sounds.FallingDown:Stop()
-		end
-	end)
+	-- Connections on services (not on the character) would outlive a respawn,
+	-- so keep them here and drop them when the character goes away.
+	local connections = {}
+	local function track(conn)
+		table.insert(connections, conn)
+		return conn
+	end
 
-	humanoid.FreeFalling:Connect(function(active)
-		if active then
-			sounds.FreeFall.TimePosition = 0
-			sounds.FreeFall:Play()
-		else
-			sounds.FreeFall:Stop()
-		end
-	end)
-
-	humanoid.Jumping:Connect(function()
+	local function playJumpSound()
 		sounds.Jumping.TimePosition = 0
 		sounds.Jumping:Play()
 		task.delay(0.1 + (math.random() / 10), function()
@@ -87,29 +78,101 @@ local function setupAudio(char)
 				sounds.Jumping:Stop()
 			end
 		end)
-	end)
+	end
 
-	humanoid.GettingUp:Connect(function()
+	track(humanoid.FallingDown:Connect(function(active)
+		if active then
+			sounds.FallingDown.TimePosition = 0
+			sounds.FallingDown:Play()
+		else
+			sounds.FallingDown:Stop()
+		end
+	end))
+
+	track(humanoid.GettingUp:Connect(function()
 		sounds.GettingUp.TimePosition = 0
 		sounds.GettingUp:Play()
-	end)
+	end))
+
+	-- Only a jump the player actually pressed counts. The 2006 physics script
+	-- launches you back up when you land (the bounce), and walking off a ledge
+	-- also puts you in the air; neither should make jump sounds.
+	local JUMP_REQUEST_WINDOW = 0.3
+	local lastJumpRequest = -math.huge
+	local inRealJump = false
+
+	track(UserInputService.JumpRequest:Connect(function()
+		lastJumpRequest = os.clock()
+	end))
+	track(humanoid:GetPropertyChangedSignal("Jump"):Connect(function()
+		if humanoid.Jump then
+			lastJumpRequest = os.clock()
+		end
+	end))
+
+	track(humanoid.StateChanged:Connect(function(oldState, newState)
+		if oldState == Enum.HumanoidStateType.Freefall then
+			sounds.FreeFall:Stop()
+		end
+
+		if newState == Enum.HumanoidStateType.Jumping then
+			inRealJump = os.clock() - lastJumpRequest <= JUMP_REQUEST_WINDOW
+			if inRealJump then
+				playJumpSound()
+			end
+		elseif newState == Enum.HumanoidStateType.Freefall then
+			-- The swoosh belongs to a real jump only, not to bounces or falls.
+			if oldState == Enum.HumanoidStateType.Jumping and inRealJump then
+				sounds.FreeFall.TimePosition = 0
+				sounds.FreeFall:Play()
+			end
+			inRealJump = false
+		else
+			inRealJump = false
+		end
+	end))
+
+	-- Velocity of whatever we're standing on, so conveyors and moving
+	-- platforms don't count as walking.
+	local floorParams = RaycastParams.new()
+	floorParams.FilterDescendantsInstances = { char }
+
+	local function getFloorVelocity()
+		local reach = rPart.Size.Y / 2 + math.max(humanoid.HipHeight, 0) + 2.5
+		local result = workspace:Raycast(rPart.Position, Vector3.new(0, -reach, 0), floorParams)
+		if result and result.Instance then
+			return result.Instance:GetVelocityAtPosition(result.Position)
+		end
+		return Vector3.new(0, 0, 0)
+	end
 
 	-- Custom Running Loop
-	RunService.Heartbeat:Connect(function()
-		if not char.Parent or humanoid.Health <= 0 then return end
-		local velocity = (rPart.Velocity * Vector3.new(1, 0, 1)).Magnitude
-		local state = humanoid:GetState()
+	track(RunService.Heartbeat:Connect(function()
+		local walking = false
+		if humanoid.Health > 0
+			and humanoid:GetState() == Enum.HumanoidStateType.Running
+			and humanoid.MoveDirection.Magnitude > 0.1
+		then
+			local relative = (rPart.AssemblyLinearVelocity - getFloorVelocity()) * Vector3.new(1, 0, 1)
+			walking = relative.Magnitude > 0.5
+		end
 
-		if state == Enum.HumanoidStateType.Running and velocity > 0.5 then
+		if walking then
 			if not sounds.Running.IsPlaying then
 				sounds.Running:Play()
 			end
-		else
-			if sounds.Running.IsPlaying then
-				sounds.Running:Stop()
-			end
+		elseif sounds.Running.IsPlaying then
+			sounds.Running:Stop()
 		end
-	end)
+	end))
+
+	track(char.AncestryChanged:Connect(function()
+		if char:IsDescendantOf(game) then return end
+		for i, conn in ipairs(connections) do
+			conn:Disconnect()
+			connections[i] = nil
+		end
+	end))
 
 	-- 4. TOOL SOUND GLITCH HANDLING
 	local markedSounds = {}
